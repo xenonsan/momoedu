@@ -3,17 +3,11 @@ services:
     image: node:20-bookworm-slim
     container_name: dloxd
     working_dir: /app
-
-    command:
-      - sh
-      - -c
-      - npm install --omit=dev && exec node server.js
-
+    command: sh -c "npm install --omit=dev && exec node server.js"
     restart: unless-stopped
-
+    init: true
     ports:
       - "2525:2525"
-
     environment:
       PORT: "2525"
       UPSTREAM_ORIGIN: "https://bloxd.io"
@@ -22,7 +16,7 @@ services:
       MAX_BODY_BYTES: "16777216"
       WS_QUEUE_MAX_BYTES: "1048576"
       SLOW_REQUEST_MS: "2000"
+      TCP_KEEPALIVE_MS: "15000"
       NODE_ENV: "production"
-
     volumes:
       - /opt/apps/dloxd:/app

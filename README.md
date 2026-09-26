@@ -1,17 +1,30 @@
-# Bloxd Direct SW Proxy v0.5.0
+# Bloxd Direct SW Proxy v0.5.1
 
-Performance release. Code 3対策のCookie/User-Agent/Origin/Referer/WebSocket query転送を維持しつつ、ゲーム中のメッセージ単位ログを廃止しました。
+VPS上の1006調査用安定化版です。
 
-- WebSocketはカウンタ加算とバイナリ転送のみ
-- 切断時だけメッセージ数・バイト数を1行記録
-- HTTP成功ログを廃止し、エラーまたは2秒以上の応答のみ記録
-- HTTP/HTTPS Keep-Aliveを有効化
-- ログ出力をWriteStreamへ変更
-- console出力を起動、警告、エラー、切断に限定
-- 1006クラッシュ防止を維持
+- `closedBy=client|upstream`で切断元を記録
+- client/upstream双方の終了コードを記録
+- 最終送受信から切断までの時間を記録
+- TCP keepalive 15秒とTCP_NODELAYを双方へ設定
+- phpinfo、WordPress、`.env`、`.git`等のスキャンパスをローカル404
+- メッセージ単位ログは復活させず軽量性を維持
+- Code 3対策のCookie/User-Agent/Origin/Referer転送を維持
+
+更新後:
 
 ```bash
+cd /opt/apps/dloxd
 npm install
 npm run check
-npm start
+docker compose up -d --force-recreate
+```
+
+確認対象ログ:
+
+```text
+websocket-session-ended
+closedBy=client
+closedBy=upstream
+lastClientAgoMs
+lastUpstreamAgoMs
 ```
