@@ -7,10 +7,11 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "2525:2525"
+      - "5757:5757"
     environment:
-      PORT: "2525"
-      UPSTREAM_ORIGIN: "https://bloxd.io"
+      PORT: "5757"
+      UPSTREAM_ORIGIN: "https://momo-edu.konami.net"
+      ALLOWED_ROOT_HOSTS: "*"
       LOG_DIR: "/app/logs"
       UPSTREAM_TIMEOUT_MS: "30000"
       MAX_BODY_BYTES: "16777216"

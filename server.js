@@ -1,15 +1,41 @@
 'use strict';
 const fs=require('fs'),path=require('path'),dns=require('dns').promises,net=require('net'),http=require('http'),https=require('https'),crypto=require('crypto');
 const express=require('express'),{WebSocketServer,WebSocket}=require('ws'),app=express();
-const PORT=pos(process.env.PORT,2525),TIMEOUT=pos(process.env.UPSTREAM_TIMEOUT_MS,30000),MAX_BODY=pos(process.env.MAX_BODY_BYTES,16*1024*1024),WS_QUEUE_MAX=pos(process.env.WS_QUEUE_MAX_BYTES,1024*1024),SLOW_MS=pos(process.env.SLOW_REQUEST_MS,2000),TCP_KEEPALIVE_MS=pos(process.env.TCP_KEEPALIVE_MS,15000);
-const UPSTREAM=new URL(process.env.UPSTREAM_ORIGIN||'https://bloxd.io');
-const ROOTS=String(process.env.ALLOWED_ROOT_HOSTS||'bloxd.io,googleapis.com,gstatic.com,google.com,recaptcha.net,cloudflare.com,cloudflareinsights.com,unpkg.com,bytebrew.io,ytimg.com').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+const PORT=pos(process.env.PORT,5757),TIMEOUT=pos(process.env.UPSTREAM_TIMEOUT_MS,30000),MAX_BODY=pos(process.env.MAX_BODY_BYTES,16*1024*1024),WS_QUEUE_MAX=pos(process.env.WS_QUEUE_MAX_BYTES,1024*1024),SLOW_MS=pos(process.env.SLOW_REQUEST_MS,2000),TCP_KEEPALIVE_MS=pos(process.env.TCP_KEEPALIVE_MS,15000);
+const UPSTREAM=new URL(process.env.UPSTREAM_ORIGIN||'https://momo-edu.konami.net');
+const ROOTS=String(process.env.ALLOWED_ROOT_HOSTS||'*').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
 const LOG_DIR=path.resolve(process.env.LOG_DIR||path.join(__dirname,'logs'));fs.mkdirSync(LOG_DIR,{recursive:true});
 const stamp=new Date().toISOString().replace(/[:.]/g,'-');const LOG_FILE=path.join(LOG_DIR,`proxy-${stamp}-${process.pid}-${crypto.randomBytes(3).toString('hex')}.log`);const LOG_STREAM=fs.createWriteStream(LOG_FILE,{flags:'a'});
+const OVERRIDE_FILE=path.join(__dirname,'response-overrides.json');
 function pos(v,f){const n=parseInt(v,10);return Number.isInteger(n)&&n>0?n:f;}
 function clean(v){return String(v??'').replace(/([?&](?:token|key|code|auth|session|captcha|secret)=)[^&\s]+/gi,'$1[REDACTED]');}
 function log(level,type,fields={}){const safe={};for(const[k,v]of Object.entries(fields))safe[k]=/cookie|authorization|token|body/i.test(k)?'[REDACTED]':clean(v);const line=JSON.stringify({time:new Date().toISOString(),level,type,...safe});LOG_STREAM.write(line+'\n');if(level==='error'||level==='warn'||type==='server-start'||type==='websocket-session-ended')console[level==='error'?'error':level==='warn'?'warn':'log'](line);}
-function allowed(h){h=h.toLowerCase().replace(/\.$/,'');return ROOTS.some(r=>h===r||h.endsWith('.'+r));}
+function loadResponseOverrides(){
+ const config=JSON.parse(fs.readFileSync(OVERRIDE_FILE,'utf8'));
+ if(!config||!Array.isArray(config.rules))throw new Error(`${OVERRIDE_FILE} must contain a rules array`);
+ return config.rules.map((rule,index)=>{
+  if(!rule||typeof rule!=='object'||typeof rule.enabled!=='boolean'||typeof rule.url!=='string'||typeof rule.method!=='string'||!Number.isInteger(rule.statusCode)||rule.statusCode<200||rule.statusCode>599||[204,205,304].includes(rule.statusCode)||typeof rule.contentType!=='string'||!rule.response||typeof rule.response!=='object'||Array.isArray(rule.response))throw new Error(`Invalid response override at rules[${index}]`);
+  let url;
+  try{url=new URL(rule.url);}catch{throw new Error(`Invalid URL in response override at rules[${index}]`);}
+  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.hash)throw new Error(`Invalid URL in response override at rules[${index}]`);
+  http.validateHeaderValue('Content-Type',rule.contentType);
+  const method=rule.method.toUpperCase();
+  if(method!=='ALL'&&!/^[A-Z]+$/.test(method))throw new Error(`Invalid method in response override at rules[${index}]`);
+  const headers=rule.headers??{};
+  if(!headers||typeof headers!=='object'||Array.isArray(headers))throw new Error(`Invalid headers in response override at rules[${index}]`);
+  for(const[name,value]of Object.entries(headers)){
+   http.validateHeaderName(name);
+   http.validateHeaderValue(name,value);
+   if(['content-length','content-encoding','transfer-encoding'].includes(name.toLowerCase()))throw new Error(`Managed response header "${name}" cannot be overridden`);
+  }
+  return {...rule,method,url,headers};
+ });
+}
+const RESPONSE_OVERRIDES=loadResponseOverrides();
+function findResponseOverride(method,target){
+ return RESPONSE_OVERRIDES.find(rule=>rule.enabled&&(rule.method==='ALL'||rule.method===method.toUpperCase())&&rule.url.origin===target.origin&&rule.url.pathname===target.pathname&&rule.url.search===target.search);
+}
+function allowed(h){h=h.toLowerCase().replace(/\.$/,'');return ROOTS.includes('*')||ROOTS.some(r=>h===r||h.endsWith('.'+r));}
 function privateIp(ip){if(net.isIPv4(ip)){const p=ip.split('.').map(Number);return p[0]===10||p[0]===127||p[0]===0||(p[0]===169&&p[1]===254)||(p[0]===172&&p[1]>=16&&p[1]<=31)||(p[0]===192&&p[1]===168)||p[0]>=224;}const x=ip.toLowerCase();return x==='::1'||x==='::'||x.startsWith('fc')||x.startsWith('fd')||/^fe[89ab]/.test(x);}
 async function validate(u){if(!['http:','https:'].includes(u.protocol))throw Object.assign(new Error('Protocol denied'),{status:400});if(!allowed(u.hostname))throw Object.assign(new Error('Host denied'),{status:403});const a=await dns.lookup(u.hostname,{all:true,verbatim:true});if(!a.length||a.some(x=>privateIp(x.address)))throw Object.assign(new Error('Address denied'),{status:403});}
 function decode64url(s){return Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');}
@@ -26,7 +52,9 @@ app.get('/__proxy-local/healthz',(q,r)=>r.type('text').send('ok'));
 const HTTP_AGENT=new http.Agent({keepAlive:true,maxSockets:128,maxFreeSockets:32,timeout:30000});
 const HTTPS_AGENT=new https.Agent({keepAlive:true,maxSockets:128,maxFreeSockets:32,timeout:30000});
 const BLOCKED_PATH=/(?:^|\/)(?:phpinfo(?:\.php)?|\.env|\.git|wp-admin|wp-json|administrator|vendor)(?:\/|$)|\.php(?:$|\?)/i;
-app.use(async(req,res)=>{const started=Date.now();if(BLOCKED_PATH.test(req.path)){log('warn','blocked-scan-path',{remote:req.socket.remoteAddress||'',path:req.path});return res.status(404).end();}let target;try{target=targetFor(req);await validate(target);}catch(e){log('warn','request-denied',{message:e.message,url:req.originalUrl});return res.status(e.status||400).send(e.message);}
+app.use(async(req,res)=>{const started=Date.now();let target;try{target=targetFor(req);}catch(e){log('warn','request-denied',{message:e.message,url:req.originalUrl});return res.status(e.status||400).send(e.message);}
+ const override=findResponseOverride(req.method,target);if(override){req.resume();const body=Buffer.from(JSON.stringify(override.response));for(const[name,value]of Object.entries(override.headers))res.setHeader(name,value);res.status(override.statusCode).set('Content-Type',override.contentType).set('Cache-Control','no-store').send(body);log('info','response-overridden',{method:req.method,host:target.hostname,path:target.pathname,name:override.name||''});return;}
+ if(BLOCKED_PATH.test(req.path)){log('warn','blocked-scan-path',{remote:req.socket.remoteAddress||'',path:req.path});return res.status(404).end();}try{await validate(target);}catch(e){log('warn','request-denied',{message:e.message,url:req.originalUrl});return res.status(e.status||400).send(e.message);}
  const headers={};for(const[k,v]of Object.entries(req.headers))if(!['host','connection','proxy-connection','origin','referer','content-length','accept-encoding'].includes(k)&&v!=null)headers[k]=v;
  headers.host=target.host;headers.origin=UPSTREAM.origin;headers.referer=UPSTREAM.origin+'/';headers['accept-encoding']='identity';
  const tr=target.protocol==='https:'?https:http;const agent=target.protocol==='https:'?HTTPS_AGENT:HTTP_AGENT;

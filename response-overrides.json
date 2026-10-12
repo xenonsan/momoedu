@@ -1,0 +1,41 @@
+{
+  "rules": [
+    {
+      "enabled": true,
+      "name": "accounts.php",
+      "url": "https://momo-edu.konami.net/mmttedu/app_api/student/auth/accounts.php",
+      "method": "POST",
+      "statusCode": 200,
+      "contentType": "application/json; charset=utf-8",
+      "headers": {
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
+      },
+      "response": {
+        "result": 0,
+        "token": "",
+        "bonbi": true,
+        "bukken": true,
+        "playtime_pd": 1440,
+        "info_fusen": false,
+        "game_version": 1
+      }
+    },
+    {
+      "enabled": true,
+      "name": "update_token.php",
+      "url": "https://momo-edu.konami.net/mmttedu/app_api/student/class/update_token.php",
+      "method": "POST",
+      "statusCode": 200,
+      "contentType": "application/json; charset=utf-8",
+      "headers": {
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
+      },
+      "response": {
+        "token": true,
+        "room": true
+      }
+    }
+  ]
+}

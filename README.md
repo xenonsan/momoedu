@@ -28,3 +28,9 @@ closedBy=upstream
 lastClientAgoMs
 lastUpstreamAgoMs
 ```
+
+## API応答の置き換え
+
+`response-overrides.json` の `rules` に設定した URL と HTTP メソッドに一致するリクエストは、上流へ転送せず指定した JSON 応答を返します。ルールの追加・変更後はサーバー（Docker Compose環境ではコンテナ）を再起動してください。無効化する場合は対象ルールの `enabled` を `false` にします。
+
+ボタンやブラウザー拡張機能は不要です。通常の上流転送や `.php` パスのブロックは、設定に一致するリクエスト以外ではそのままです。
